@@ -53,11 +53,10 @@ func main() {
 	}
 
 	for _, file := range files {
-		AutomaticGenerationStartIndex, AutomaticGenerationEndIndex = -1, -1
-
 		if !strings.Contains(file.Name(), ".json") {
 			continue
 		}
+		AutomaticGenerationStartIndex, AutomaticGenerationEndIndex = -1, -1
 
 		fileName := file.Name()
 		readFile, err := os.ReadFile(dirPath + fileName)
@@ -86,8 +85,6 @@ func main() {
 
 		log.Printf("Successfully generated Go file: %s", outputFile)
 	}
-
-	LoadTestJson("./")
 }
 
 func makeGoFile(_, fileName, fileData string, goFileContent string) (string, error) {
@@ -287,52 +284,53 @@ func printStruct(sModel *structModel) string {
 	return goContent
 }
 
+// 将任意 JSON 键名转换为合法的 Go 字段名（导出形式）。
+// 转换规则：
+// 1. 按非字母数字字符对字符串进行分词，例如 "user-name_id" → ["user", "name", "id"]
+// 2. 每个词首字母大写、其余字母小写（Title Case）
+// 3. 拼接所有词作为字段名
+// 4. 如果字段名为空，则返回默认 "Field"
+// 5. 如果字段名以数字开头，则前缀 "Field"，避免非法 Go 标识符
 func toFieldName(s string) string {
-	// 转换为驼峰命名的字段名（首字母大写）
-	words := splitWords(s)
+	// 如果输入空字符串，直接返回空
+	if s == "" {
+		return ""
+	}
+
+	// 将非字母数字的字符作为分隔符进行分词
+	words := strings.FieldsFunc(s, func(r rune) bool {
+		return !(unicode.IsLetter(r) || unicode.IsDigit(r))
+	})
+
+	// 如果分词失败（例如全是特殊字符），保留原字符串作为唯一词
+	if len(words) == 0 {
+		words = []string{s}
+	}
+
+	// 逐词转换成首字母大写，其余小写（Title Case）
 	var result strings.Builder
 	for _, word := range words {
 		if word != "" {
+			// word[:1] 是首字母；word[1:] 是剩余部分
 			result.WriteString(strings.ToUpper(word[:1]) + strings.ToLower(word[1:]))
 		}
 	}
+
+	// 拼接后的字段名
 	name := result.String()
+
+	// 如果结果仍为空，返回默认字段名
 	if name == "" {
 		return "Field"
 	}
-	if _, err := strconv.ParseFloat(name, 64); err == nil {
+
+	// 判断开头字符是否为数字，若是数字，前面加上 "Field"
+	if _, err := strconv.ParseFloat(name[0:1], 64); err == nil {
 		return "Field" + name
 	}
+
+	// 返回最终合法的 Go 字段名
 	return name
-}
-
-// 将输入字符串分割为单词切片，支持驼峰命名和分隔符分割
-func splitWords(s string) []string {
-	var words []string
-	var currentWord strings.Builder
-
-	for i, c := range s {
-		if unicode.IsLetter(c) || unicode.IsDigit(c) {
-			if i > 0 && unicode.IsUpper(c) && i < len(s)-1 {
-				if currentWord.Len() > 0 {
-					words = append(words, currentWord.String())
-					currentWord.Reset()
-				}
-			}
-			currentWord.WriteRune(c)
-		} else {
-			if currentWord.Len() > 0 {
-				words = append(words, currentWord.String())
-				currentWord.Reset()
-			}
-		}
-	}
-
-	if currentWord.Len() > 0 {
-		words = append(words, currentWord.String())
-	}
-
-	return words
 }
 
 // 检查是否为类数组形式的map

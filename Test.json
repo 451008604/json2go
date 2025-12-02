@@ -1,9 +1,10 @@
 {
     "int": 1,
-    "String": "This is a test text",
-    "Bool": true,
-    "NULL": null,
-    "Array1": [
+    "string": "This is a test text",
+    "bool": true,
+    "null": null,
+    "A": "test",
+    "Arrayid1": [
         1,
         2,
         3
@@ -13,7 +14,7 @@
         "2",
         "3"
     ],
-    "Array3": [
+    "array3": [
         {
             "ID": 1,
             "Name": "Name1"
@@ -23,7 +24,7 @@
             "Name": "Name2"
         }
     ],
-    "Object": {
+    "oBject": {
         "Obj1": {
             "ID": 1,
             "Name": "Name1"
