@@ -1,0 +1,40 @@
+{
+    "int": 1,
+    "String": "This is a test text",
+    "Bool": true,
+    "NULL": null,
+    "Array1": [
+        1,
+        2,
+        3
+    ],
+    "Array2": [
+        "1",
+        "2",
+        "3"
+    ],
+    "Array3": [
+        {
+            "ID": 1,
+            "Name": "Name1"
+        },
+        {
+            "ID": 1,
+            "Name": "Name2"
+        }
+    ],
+    "Object": {
+        "Obj1": {
+            "ID": 1,
+            "Name": "Name1"
+        },
+        "Obj2": {
+            "ID": 2,
+            "Name": "Name2"
+        },
+        "Obj3": {
+            "ID": 3,
+            "Name": "Name3"
+        }
+    }
+}
