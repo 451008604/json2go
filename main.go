@@ -27,24 +27,69 @@ type fieldModel struct {
 }
 
 var (
-	resultArr                     []*structModel
-	AutomaticGenerationStartFlag  = "// ==== auto-generated-start ====\n" // 自动生成开始
-	AutomaticGenerationEndFlag    = "// ==== auto-generated-end ====\n"   // 自动生成结束
-	AutomaticGenerationEndIndex   = -1
-	AutomaticGenerationStartIndex = -1
+	inputDir, file, pkg, outputDir string // 输入目录、文件名、包名、输出目录
+	ResultArr                      []*structModel
+	GenerationStartFlag            = "// ==== auto-generated-start ====\n" // 自动生成开始
+	GenerationEndFlag              = "// ==== auto-generated-end ====\n"   // 自动生成结束
+	GenerationStartStr             = ""
+	GenerationEndStr               = ""
+	CurFileName                    = ""
+	CurInitSModel                  = &structModel{}
 )
 
-var (
-	inputDir, file, pkg, outputDir string
-)
+type replaceModel struct {
+	old string        // 要替换的字符串
+	new func() string // 替换后的字符串
+}
+
+var replaceAll = []replaceModel{
+	{old: "${pkg}", new: func() string {
+		return pkg
+	}},
+	{old: "${StartFlag}", new: func() string {
+		return GenerationStartFlag
+	}},
+	{old: "${EndFlag}", new: func() string {
+		if GenerationEndStr == "" {
+			return GenerationEndFlag
+		}
+		return GenerationEndStr
+	}},
+	{old: "${imports}", new: func() string {
+		if GenerationStartStr != "" {
+			return GenerationStartStr
+		}
+		return "import (\n\t\"encoding/json\"\n\t\"fmt\"\n\t\"os\"\n\t\"runtime/debug\"\n)\n\n"
+	}},
+	{old: "${fileName}", new: func() string {
+		return CurFileName
+	}},
+	{old: "${structs}", new: func() string {
+		str := ""
+		for _, v := range ResultArr {
+			str += printStruct(v)
+		}
+		return str
+	}},
+	{old: "${isMap}", new: func() string {
+		if CurInitSModel.IsTransFromMap {
+			return "Data map[int]"
+		}
+		return "Data"
+	}},
+	{old: "${structName}", new: func() string {
+		return CurInitSModel.StructName
+	}},
+}
 
 func main() {
 	// 定义参数
-	inputDir = *flag.String("i", "./", "输入目录路径")
-	outputDir = *flag.String("o", "./", "输出目录路径")
-	file = *flag.String("f", "", "指定文件名")
-	pkg = *flag.String("p", "main", "自定义包名")
+	i := flag.String("i", "./", "输入目录路径")
+	o := flag.String("o", "./", "输出目录路径")
+	f := flag.String("f", "", "指定文件名")
+	p := flag.String("p", "main", "自定义包名")
 	flag.Parse()
+	inputDir, outputDir, file, pkg = *i, *o, *f, *p
 
 	// 确保目录路径以斜杠结尾
 	if !strings.HasSuffix(inputDir, "/") && !strings.HasSuffix(inputDir, "\\") {
@@ -66,22 +111,24 @@ func main() {
 			continue
 		}
 
-		AutomaticGenerationStartIndex, AutomaticGenerationEndIndex = -1, -1
-
-		fileName := f.Name()
-		readFile, err := os.ReadFile(inputDir + fileName)
+		GenerationStartStr, GenerationEndStr = "", ""
+		CurFileName = f.Name()
+		readFile, err := os.ReadFile(inputDir + CurFileName)
 		if err != nil {
-			log.Printf("Failed to read file %s: %v", inputDir+fileName, err)
+			log.Printf("Failed to read file %s: %v", inputDir+CurFileName, err)
 			return
 		}
-		outputFile := outputDir + strings.Replace(fileName, ".json", ".go", 1)
-		goFileContent, _ := os.ReadFile(outputFile)
-		if goFileContent != nil {
-			AutomaticGenerationStartIndex = strings.Index(string(goFileContent), AutomaticGenerationStartFlag)
-			AutomaticGenerationEndIndex = strings.Index(string(goFileContent), AutomaticGenerationEndFlag)
+		outputFile := outputDir + strings.Replace(CurFileName, ".json", ".go", 1)
+		if goFileContent, _ := os.ReadFile(outputFile); goFileContent != nil {
+			if a, b := strings.Index(string(goFileContent), "import"), strings.Index(string(goFileContent), GenerationStartFlag); a >= 0 && b >= 0 {
+				GenerationStartStr = string(goFileContent)[a:b]
+			}
+			if c := strings.Index(string(goFileContent), GenerationEndFlag); c >= 0 {
+				GenerationEndStr = string(goFileContent)[c:]
+			}
 		}
 
-		goContent, err := makeGoFile(fileName, string(readFile), string(goFileContent))
+		goContent, err := makeGoFile(string(readFile))
 		if err != nil {
 			log.Printf("Failed to generate Go file: %v", err)
 			return
@@ -97,67 +144,43 @@ func main() {
 	}
 }
 
-func makeGoFile(fileName, fileData string, goFileContent string) (string, error) {
+func makeGoFile(fileData string) (string, error) {
 	// 解析文件内容
 	var data map[string]any
 	if err := json.Unmarshal([]byte(fileData), &data); err != nil {
 		return "", fmt.Errorf("failed to parse JSON: %v", err)
 	}
 
-	resultArr = make([]*structModel, 0)
+	ResultArr = make([]*structModel, 0)
 	// 将json数据转换为结构体
-	initSModel := &structModel{StructName: strings.Replace(fileName, ".json", "Json", 1)}
-	pullStructModel2ResultArr(initSModel, data)
+	CurInitSModel = &structModel{StructName: strings.Replace(CurFileName, ".json", "Json", 1)}
+	// 开始处理数据
+	pullStructModel2ResultArr(CurInitSModel, data)
 
-	goContent := "package " + pkg + "\n\n"
-	if AutomaticGenerationStartIndex < 0 {
-		goContent += "import (\n" +
-			"\t\"encoding/json\"\n" +
-			"\t\"fmt\"\n" +
-			"\t\"os\"\n" +
-			"\t\"runtime/debug\"\n" +
-			")\n\n"
-	} else {
-		goContent += goFileContent[strings.Index(goFileContent, "import"):AutomaticGenerationStartIndex]
-	}
-
-	goContent += AutomaticGenerationStartFlag + "// from " + fileName + "\n\n"
-
-	// 写入结构体
-	for _, v := range resultArr {
-		goContent += printStruct(v)
-	}
-
-	if initSModel.IsTransFromMap {
-		goContent += "var " + initSModel.StructName + "Data map[int]" + initSModel.StructName + "\n\n"
-	} else {
-		goContent += "var " + initSModel.StructName + "Data " + initSModel.StructName + "\n\n"
-	}
-
-	goContent += "func Load" + initSModel.StructName + "(dirPath string) {\n" +
-		"\tdata, err := os.ReadFile(dirPath + \"" + fileName + "\")\n" +
-		"\tif err != nil {\n" +
-		"\t\tfmt.Printf(\"%v\\n%v\", err, string(debug.Stack()))\n" +
-		"\t\treturn\n" +
-		"\t}\n"
-
-	if initSModel.IsTransFromMap {
-		goContent += "\t" + initSModel.StructName + "Data = map[int]" + initSModel.StructName + "{}\n"
-	} else {
-		goContent += "\t" + initSModel.StructName + "Data = " + initSModel.StructName + "{}\n"
-	}
-
-	goContent += "\terr = json.Unmarshal(data, &" + initSModel.StructName + "Data)\n" +
+	// 生成go文件内容
+	goContent := "package ${pkg}\n\n" +
+		"${imports}" +
+		"${StartFlag}" +
+		"// from ${fileName}\n\n" +
+		"${structs}" +
+		"var ${structName}${isMap} ${structName}\n\n" +
+		"func Load${structName}(dirPath string) {\n" +
+		"\tdata, err := os.ReadFile(dirPath + \"${fileName}\")\n" +
 		"\tif err != nil {\n" +
 		"\t\tfmt.Printf(\"%v\\n%v\", err, string(debug.Stack()))\n" +
 		"\t\treturn\n" +
 		"\t}\n" +
-		"}\n\n"
+		"\t${structName}${isMap} = ${structName}{}\n" +
+		"\terr = json.Unmarshal(data, &${structName}Data)\n" +
+		"\tif err != nil {\n" +
+		"\t\tfmt.Printf(\"%v\\n%v\", err, string(debug.Stack()))\n" +
+		"\t\treturn\n" +
+		"\t}\n" +
+		"}\n\n" +
+		"${EndFlag}"
 
-	if AutomaticGenerationEndIndex == -1 {
-		goContent += AutomaticGenerationEndFlag
-	} else {
-		goContent += goFileContent[AutomaticGenerationEndIndex:]
+	for _, v := range replaceAll {
+		goContent = strings.ReplaceAll(goContent, v.old, v.new())
 	}
 
 	return goContent, nil
@@ -220,7 +243,7 @@ func analyzeType(fModel *fieldModel) *fieldModel {
 
 func pullStructModel2ResultArr(sModel *structModel, data map[string]any) *structModel {
 	isExist := false
-	for _, v := range resultArr {
+	for _, v := range ResultArr {
 		if v.StructName == sModel.StructName {
 			sModel = v
 			isExist = true
@@ -228,7 +251,7 @@ func pullStructModel2ResultArr(sModel *structModel, data map[string]any) *struct
 		}
 	}
 	if !isExist {
-		resultArr = append(resultArr, sModel)
+		ResultArr = append(ResultArr, sModel)
 	}
 
 	// map[string]map[string]any => map[string]any
