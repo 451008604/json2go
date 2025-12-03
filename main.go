@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"flag"
 	"fmt"
 	"log"
 	"math"
@@ -33,45 +34,54 @@ var (
 	AutomaticGenerationStartIndex = -1
 )
 
-func main() {
-	os.Args = []string{"", "./"}
+var (
+	inputDir, file, pkg, outputDir string
+)
 
-	// if len(os.Args) < 3 {
-	// 	log.Fatal("Usage: go run transfromjson.go <dirPath> <fileName>")
-	// }
-	dirPath := os.Args[1]
+func main() {
+	// 定义参数
+	inputDir = *flag.String("i", "./", "输入目录路径")
+	outputDir = *flag.String("o", "./", "输出目录路径")
+	file = *flag.String("f", "", "指定文件名")
+	pkg = *flag.String("p", "main", "自定义包名")
+	flag.Parse()
 
 	// 确保目录路径以斜杠结尾
-	if !strings.HasSuffix(dirPath, "/") && !strings.HasSuffix(dirPath, "\\") {
-		dirPath += "/"
+	if !strings.HasSuffix(inputDir, "/") && !strings.HasSuffix(inputDir, "\\") {
+		inputDir += "/"
 	}
 
-	files, err := os.ReadDir(dirPath)
+	files, err := os.ReadDir(inputDir)
 	if err != nil {
-		log.Printf("Failed to read dir %s: %v", dirPath, err)
+		log.Printf("Failed to read inputDir %s: %v", inputDir, err)
 		return
 	}
 
-	for _, file := range files {
-		if !strings.Contains(file.Name(), ".json") {
+	for _, f := range files {
+		if !strings.Contains(f.Name(), ".json") {
 			continue
 		}
+
+		if file != "" && file != f.Name() {
+			continue
+		}
+
 		AutomaticGenerationStartIndex, AutomaticGenerationEndIndex = -1, -1
 
-		fileName := file.Name()
-		readFile, err := os.ReadFile(dirPath + fileName)
+		fileName := f.Name()
+		readFile, err := os.ReadFile(inputDir + fileName)
 		if err != nil {
-			log.Printf("Failed to read file %s: %v", dirPath+fileName, err)
+			log.Printf("Failed to read file %s: %v", inputDir+fileName, err)
 			return
 		}
-		outputFile := dirPath + strings.Replace(fileName, ".json", ".go", 1)
+		outputFile := outputDir + strings.Replace(fileName, ".json", ".go", 1)
 		goFileContent, _ := os.ReadFile(outputFile)
 		if goFileContent != nil {
 			AutomaticGenerationStartIndex = strings.Index(string(goFileContent), AutomaticGenerationStartFlag)
 			AutomaticGenerationEndIndex = strings.Index(string(goFileContent), AutomaticGenerationEndFlag)
 		}
 
-		goContent, err := makeGoFile(dirPath, fileName, string(readFile), string(goFileContent))
+		goContent, err := makeGoFile(fileName, string(readFile), string(goFileContent))
 		if err != nil {
 			log.Printf("Failed to generate Go file: %v", err)
 			return
@@ -87,7 +97,7 @@ func main() {
 	}
 }
 
-func makeGoFile(_, fileName, fileData string, goFileContent string) (string, error) {
+func makeGoFile(fileName, fileData string, goFileContent string) (string, error) {
 	// 解析文件内容
 	var data map[string]any
 	if err := json.Unmarshal([]byte(fileData), &data); err != nil {
@@ -99,17 +109,16 @@ func makeGoFile(_, fileName, fileData string, goFileContent string) (string, err
 	initSModel := &structModel{StructName: strings.Replace(fileName, ".json", "Json", 1)}
 	pullStructModel2ResultArr(initSModel, data)
 
-	goContent := ""
+	goContent := "package " + pkg + "\n\n"
 	if AutomaticGenerationStartIndex < 0 {
-		goContent += "package main\n\n" +
-			"import (\n" +
+		goContent += "import (\n" +
 			"\t\"encoding/json\"\n" +
 			"\t\"fmt\"\n" +
 			"\t\"os\"\n" +
 			"\t\"runtime/debug\"\n" +
 			")\n\n"
 	} else {
-		goContent += goFileContent[0:AutomaticGenerationStartIndex]
+		goContent += goFileContent[strings.Index(goFileContent, "import"):AutomaticGenerationStartIndex]
 	}
 
 	goContent += AutomaticGenerationStartFlag + "// from " + fileName + "\n\n"
@@ -285,12 +294,6 @@ func printStruct(sModel *structModel) string {
 }
 
 // 将任意 JSON 键名转换为合法的 Go 字段名（导出形式）。
-// 转换规则：
-// 1. 按非字母数字字符对字符串进行分词，例如 "user-name_id" → ["user", "name", "id"]
-// 2. 每个词首字母大写、其余字母小写（Title Case）
-// 3. 拼接所有词作为字段名
-// 4. 如果字段名为空，则返回默认 "Field"
-// 5. 如果字段名以数字开头，则前缀 "Field"，避免非法 Go 标识符
 func toFieldName(s string) string {
 	// 如果输入空字符串，直接返回空
 	if s == "" {
